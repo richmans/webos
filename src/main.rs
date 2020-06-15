@@ -6,16 +6,18 @@
 
 use core::panic::PanicInfo;
 use webos::println;
-use webos::serial_println;
 #[cfg(test)]
 use webos::test_runner;
+extern crate alloc;
+use bootloader::{BootInfo, entry_point};
 
+entry_point!(kernel_main);
 
 #[cfg(not(test))]
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     println!("{}", info);
-    loop {}
+    webos::hlt_loop(); 
 }
 
 #[cfg(test)]
@@ -25,7 +27,7 @@ fn panic(info: &PanicInfo) -> ! {
 }
 
 #[no_mangle]
-pub extern "C" fn _start() -> ! {
+fn kernel_main(boot_info: &'static BootInfo) -> ! {
     #[cfg(test)]
     {
         test_main();
@@ -33,25 +35,20 @@ pub extern "C" fn _start() -> ! {
     }
 
     #[cfg(not(test))]
-    main();
-    
+    main(boot_info);   
 }
 
+// this function runs after everything is initialized
+// i use this for doodles that are later converted to tests.
 pub fn dothings()  {
     
 }
+
 #[allow(unconditional_panic)]
-pub fn main() -> ! {
-    serial_println!("WebOS Initializing");
+pub fn main(boot_info: &'static BootInfo) -> ! {
     println!("WebOS Initializing");
-    webos::init();
-   
-    
+    webos::init(boot_info);
     dothings();
-    serial_println!("WebOS Did not crash");
-    println!("WebOS Did not crash");
-    
-    loop {
-         
-    }
+    println!("WebOS is ready to serve.");   
+    webos::hlt_loop();  
 }

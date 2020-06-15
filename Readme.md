@@ -13,3 +13,7 @@ rustup component add llvm-tools-preview
 ```
 ## Run the thing!
 `cargo xrun`
+
+## Credits
+* Webos was based on the work of Philipp Oppermann https://os.phil-opp.com
+* A lot of useful info was used from the osdev wiki: https://wiki.osdev.org/Main_Page
