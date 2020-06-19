@@ -3,7 +3,7 @@ use crate::println;
 pub const REG_CMD: u8 = 0x4;
 pub const CMD_BUS_MASTER: u8 = 2;
 pub const REG_BAR0: u8 = 0x10;
-
+pub const REG_IRQ:u8 = 0x3c;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PCIDevice {
     bus: u8,
@@ -14,6 +14,7 @@ pub struct PCIDevice {
     class_code: u8,
     sub_class: u8,
     pub bar0: u32,
+    pub irq: u8,
 }
 
 impl PCIDevice {
@@ -144,7 +145,8 @@ pub fn read_device(seq: u16) -> Option<PCIDevice> {
     let class_code = (class_data >> 8) as u8;
     let sub_class = (class_data & 0xFF) as u8;
     let bar0 = read_config_long(bus, slot, function, REG_BAR0);
-    let device = PCIDevice{bus, slot, function, vendor, deviceid, class_code, sub_class, bar0};    
+    let irq = read_config_byte(bus, slot, function, REG_IRQ) & 0x0f;
+    let device = PCIDevice{bus, slot, function, vendor, deviceid, class_code, sub_class, bar0, irq};    
     Some(device)
 }
 

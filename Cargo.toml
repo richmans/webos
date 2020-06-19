@@ -23,7 +23,7 @@ features = ["spin_no_std"]
 test-args = ["-device", "isa-debug-exit,iobase=0xf4,iosize=0x04", "-serial", "stdio", "-display", "none"]
 test-success-exit-code = 33 # (0x10 <<1) | 1
 test-timeout = 300
-run-args = ["-m", "8M", "--netdev", "user,id=mynet", "--device", "rtl8139,netdev=mynet,mac=02:ca:fe:f0:0d:01", "--object", "filter-dump,id=mydump,netdev=mynet,file=dumpy.pcap"]
+run-args = ["-m", "8M", "--netdev", "user,id=mynet,hostfwd=tcp::1337-:1337", "--device", "rtl8139,netdev=mynet,mac=02:ca:fe:f0:0d:01", "--object", "filter-dump,id=mydump,netdev=mynet,file=dumpy.pcap"]
 [[test]]
 name = "should_panic"
 harness = false

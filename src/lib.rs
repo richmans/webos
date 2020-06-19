@@ -15,6 +15,8 @@ pub mod interrupts;
 pub mod gdt;
 pub mod pci;
 pub mod network;
+pub mod buffer;
+pub mod protocol;
 use core::panic::PanicInfo;
 #[cfg(test)]
 use bootloader::entry_point;
@@ -45,7 +47,7 @@ pub fn init(boot_info: &'static BootInfo) {
     gdt::init();
     interrupts::init_idt();
     pci::scan();
-    unsafe { interrupts::PICS.lock().initialize() }; 
+    interrupts::init_pics();
     let phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
     let mut mapper = unsafe { memory::init(phys_mem_offset) };
     let mut frame_allocator = unsafe {
