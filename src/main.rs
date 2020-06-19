@@ -3,7 +3,10 @@
 #![feature(custom_test_frameworks)]
 #![test_runner(crate::test_runner)]
 #![reexport_test_harness_main = "test_main"]
+use webos::task::Task;
+use webos::task::executor::Executor; // new
 
+use webos::task::keyboard; 
 use core::panic::PanicInfo;
 use webos::println;
 #[cfg(test)]
@@ -41,8 +44,11 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
 // this function runs after everything is initialized
 // i use this for doodles that are later converted to tests.
 pub fn dothings()  {
-    
+    let mut executor = Executor::new(); // new
+    executor.spawn(Task::new(keyboard::print_keypresses()));
+    executor.run();
 }
+
 
 #[allow(unconditional_panic)]
 pub fn main(boot_info: &'static BootInfo) -> ! {

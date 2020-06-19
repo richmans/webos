@@ -5,8 +5,6 @@ use lazy_static::lazy_static;
 #[cfg(test)]
 use crate::{serial_print, serial_println};
 
-use crate::print;
-
 use pic8259_simple::ChainedPics;
 use spin;
 
@@ -149,9 +147,11 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(
     _stack_frame: &mut InterruptStackFrame)
 {
     use x86_64::instructions::port::Port;
+
     let mut port = Port::new(0x60);
     let scancode: u8 = unsafe { port.read() };
-    print!("{}", scancode);
+    crate::task::keyboard::add_scancode(scancode); // new
+
     unsafe {
         PICS.lock()
             .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());

@@ -1,4 +1,5 @@
 #![feature(abi_x86_interrupt)] 
+#![feature(wake_trait)]
 #![no_std]
 #![cfg_attr(test, no_main)]
 #![feature(custom_test_frameworks)]
@@ -17,6 +18,7 @@ pub mod pci;
 pub mod network;
 pub mod buffer;
 pub mod protocol;
+pub mod task;
 use core::panic::PanicInfo;
 #[cfg(test)]
 use bootloader::entry_point;
