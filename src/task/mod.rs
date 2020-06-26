@@ -4,6 +4,7 @@ use core::task::{Context, Poll};
 use core::sync::atomic::{AtomicU64, Ordering};
 pub mod keyboard;
 pub mod executor;
+pub mod network;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct TaskId(u64);

@@ -10,6 +10,15 @@ use spin;
 
 pub const PIC_1_OFFSET: u8 = 32;
 pub const PIC_2_OFFSET: u8 = PIC_1_OFFSET + 8;
+const PIC1: u16 = 0x20;		/* IO base address for master PIC */
+const PIC2:u16 = 0xA0;		/* IO base address for slave PIC */
+const PIC1_COMMAND:u16 = PIC1;
+const PIC1_DATA:u16 = PIC1+1;
+const PIC2_COMMAND:u16 = PIC2;
+const PIC2_DATA:u16 = PIC2+1;
+const CMD_INIT: u8 = 0x11;
+const WAIT_PORT:u16 = 0x80;
+const MODE_8086: u8 = 0x01;
 
 pub static PICS: spin::Mutex<ChainedPics> =
     spin::Mutex::new(unsafe { ChainedPics::new(PIC_1_OFFSET, PIC_2_OFFSET) });
@@ -59,16 +68,7 @@ impl InterruptIndex {
 pub fn init_pics() {
     unsafe {
         use x86_64::instructions::port::Port;
-        const PIC1: u16 = 0x20;		/* IO base address for master PIC */
-        const PIC2:u16 = 0xA0;		/* IO base address for slave PIC */
-        const PIC1_COMMAND:u16 = PIC1;
-        const PIC1_DATA:u16 = PIC1+1;
-        const PIC2_COMMAND:u16 = PIC2;
-        const PIC2_DATA:u16 = PIC2+1;
-        const CMD_INIT: u8 = 0x11;
-        const WAIT_PORT:u16 = 0x80;
-        const MODE_8086: u8 = 0x01;
-
+        
         let mut wait_port = Port::<u8>::new(WAIT_PORT);
         let mut pic1_data = Port::<u8>::new(PIC1_DATA);
         let mut pic2_data = Port::<u8>::new(PIC2_DATA);
@@ -120,14 +120,7 @@ extern "x86-interrupt" fn double_fault_handler(stack_frame: &mut InterruptStackF
 }
 
 extern "x86-interrupt" fn network_interrupt_handler(_stack_frame: &mut InterruptStackFrame) {
-    use x86_64::instructions::port::Port;
-    let portnum = 0xc03c;
-    let mut imr_port = Port::<u16>::new(portnum);
-    unsafe {
-        println!("INT: Network interrupt received. Disabling network interrupts for now");
-        imr_port.write(0x0);
-        
-    }
+    crate::task::network::handle_interrupt();
     unsafe {
         PICS.lock()
             .notify_end_of_interrupt(InterruptIndex::Network.as_u8());

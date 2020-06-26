@@ -29,6 +29,10 @@ use x86_64::VirtAddr;
 #[cfg(test)]
 entry_point!(test_kernel_main);
 
+pub struct Kernel {
+    pub network_buffer: VirtAddr,
+}
+
 // verifies that a certain buffer is identity mapped.
 fn memory_test(membuf: VirtAddr, phys_mem_offset:VirtAddr, bufsize: usize) {
     println!("Testing memory mapping");
@@ -45,7 +49,7 @@ fn memory_test(membuf: VirtAddr, phys_mem_offset:VirtAddr, bufsize: usize) {
     }
     println!("Memory mapping test done");
 }
-pub fn init(boot_info: &'static BootInfo) {
+pub fn init(boot_info: &'static BootInfo) -> Kernel {
     gdt::init();
     interrupts::init_idt();
     pci::scan();
@@ -61,7 +65,7 @@ pub fn init(boot_info: &'static BootInfo) {
   
     memory_test(network_buffer, phys_mem_offset, network::BUFFER_SIZE);
     x86_64::instructions::interrupts::enable();  
-    network::init(network_buffer);
+    Kernel{network_buffer}
 }
 
 pub fn hlt_loop() -> ! {

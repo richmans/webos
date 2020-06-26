@@ -7,10 +7,12 @@ use webos::task::Task;
 use webos::task::executor::Executor; // new
 
 use webos::task::keyboard; 
+use webos::task::network; 
 use core::panic::PanicInfo;
 use webos::println;
 #[cfg(test)]
 use webos::test_runner;
+use webos::Kernel;
 extern crate alloc;
 use bootloader::{BootInfo, entry_point};
 
@@ -43,9 +45,10 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
 // this function runs after everything is initialized
 // i use this for doodles that are later converted to tests.
-pub fn dothings()  {
+pub fn dothings(kernel:Kernel)  {
     let mut executor = Executor::new(); // new
     executor.spawn(Task::new(keyboard::print_keypresses()));
+    executor.spawn(Task::new(network::process_packets(kernel.network_buffer)));
     executor.run();
 }
 
@@ -53,8 +56,8 @@ pub fn dothings()  {
 #[allow(unconditional_panic)]
 pub fn main(boot_info: &'static BootInfo) -> ! {
     println!("WebOS Initializing");
-    webos::init(boot_info);
-    dothings();
+    let kernel = webos::init(boot_info);
+    dothings(kernel);
     println!("WebOS is ready to serve.");   
     webos::hlt_loop();  
 }
