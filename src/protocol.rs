@@ -253,6 +253,13 @@ impl IPv4Header {
     // ipv4 checksum is only on the headers
     packet.stop_crc(p);
 
+    // calculate shadow sum for tcp and udp headers
+    let mut shadow_sum = (self.src.0 >> 16) & 0xffff;
+    shadow_sum += self.src.0 & 0xffff;
+    let mut shadow_sum = (self.dst.0 >> 16) & 0xffff;
+    shadow_sum += self.dst.0 & 0xffff;
+    shadow_sum += self.proto as u32;
+    packet.shadow_sum = shadow_sum;
   }
 
   pub fn read(packet: &mut PacketReader) -> IPv4Header {
@@ -376,12 +383,13 @@ impl UDPHeader {
  
   pub fn write(&self, packet: &mut PacketWriter) {
     let p = packet.start_packet_processor_u16();
+    packet.add_shadow_sum(p);
     packet.write_u16(self.src_port);
     packet.write_u16(self.dst_port);
     packet.insert_len_result_u16(p);
-    //packet.insert_crc_result_u16(p);
+    packet.insert_crc_result_u16(p);
     // lazy: disabled crc for udp
-    packet.write_u16(0);
+    //packet.write_u16(0);
   }
 
   pub fn read(packet: &mut PacketReader) -> UDPHeader {

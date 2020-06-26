@@ -1,9 +1,11 @@
 pub const PACKET_SIZE:usize = 1800;
 use alloc::vec::Vec;
+use crate::println;
 pub type Packet = [u8; PACKET_SIZE];
 
 struct CRCProcessorU16 {
   sum: u32,
+  shadow_sum: u32,
   len: u16,
   highbyte: bool,
   insert_crc_at: Option<usize>,
@@ -25,6 +27,11 @@ impl CRCProcessorU16 {
     self.highbyte = !self.highbyte;
   }
 
+  fn add_shadow_sum(&mut self, shadow_sum: u32) {
+    self.shadow_sum = shadow_sum;
+    println!("Setting shadow {}", shadow_sum);
+  }
+
   fn set_crc_insertion(&mut self, insert_at: usize) {
     self.insert_crc_at = Some(insert_at);
   }
@@ -41,6 +48,13 @@ impl CRCProcessorU16 {
     let mut crc = self.sum; 
     //gocha: the len header should also be in the checksum
     crc += self.len as u32;
+    if self.shadow_sum != 0 {
+      crc += self.shadow_sum;
+      crc += self.len as u32;
+      println!("With shadow {:X}", self.shadow_sum);
+    } else {
+      println!("No shadow");
+    }
     while crc > 0xFFFF {
       crc = (crc & 0xFFFF) + (crc >> 16);
     }
@@ -56,17 +70,18 @@ pub struct PacketReader<'a> {
 pub struct PacketWriter<'a> {
   pub ptr: usize,
   pub data: &'a mut Packet,
+  pub shadow_sum: u32,
   processing: bool,
   processors: Vec<CRCProcessorU16>,
 }
 
 impl<'a> PacketWriter<'a> {
   pub fn new(data: &'a mut Packet) -> PacketWriter {
-    PacketWriter{ptr: 0, data, processing: true, processors: Vec::<CRCProcessorU16>::new()}
+    PacketWriter{ptr: 0, data, processing: true, processors: Vec::<CRCProcessorU16>::new(), shadow_sum: 0}
   }
 
   pub fn start_packet_processor_u16(&mut self) -> usize {
-    let processor = CRCProcessorU16{len:0, sum: 0, highbyte: true, insert_crc_at:None, insert_len_at: None, crc_enabled: true};
+    let processor = CRCProcessorU16{len:0, sum: 0, highbyte: true, insert_crc_at:None, insert_len_at: None, crc_enabled: true, shadow_sum:0};
     let idx = self.processors.len();
     self.processors.push(processor);
     idx
@@ -82,6 +97,9 @@ impl<'a> PacketWriter<'a> {
     self.write_u16(0);
   }
   
+  pub fn add_shadow_sum(&mut self, idx: usize) {
+    self.processors[idx].add_shadow_sum(self.shadow_sum)
+  }
   pub fn stop_crc(&mut self, idx:usize) {
     self.processors[idx].stop_crc();
   }
