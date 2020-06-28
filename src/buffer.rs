@@ -1,6 +1,5 @@
 pub const PACKET_SIZE:usize = 1800;
 use alloc::vec::Vec;
-use crate::println;
 pub type Packet = [u8; PACKET_SIZE];
 
 struct CRCProcessorU16 {
@@ -29,7 +28,6 @@ impl CRCProcessorU16 {
 
   fn add_shadow_sum(&mut self, shadow_sum: u32) {
     self.shadow_sum = shadow_sum;
-    println!("Setting shadow {}", shadow_sum);
   }
 
   fn set_crc_insertion(&mut self, insert_at: usize) {
@@ -51,9 +49,6 @@ impl CRCProcessorU16 {
     if self.shadow_sum != 0 {
       crc += self.shadow_sum;
       crc += self.len as u32;
-      println!("With shadow {:X}", self.shadow_sum);
-    } else {
-      println!("No shadow");
     }
     while crc > 0xFFFF {
       crc = (crc & 0xFFFF) + (crc >> 16);

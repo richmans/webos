@@ -256,7 +256,7 @@ impl IPv4Header {
     // calculate shadow sum for tcp and udp headers
     let mut shadow_sum = (self.src.0 >> 16) & 0xffff;
     shadow_sum += self.src.0 & 0xffff;
-    let mut shadow_sum = (self.dst.0 >> 16) & 0xffff;
+    shadow_sum += (self.dst.0 >> 16) & 0xffff;
     shadow_sum += self.dst.0 & 0xffff;
     shadow_sum += self.proto as u32;
     packet.shadow_sum = shadow_sum;
