@@ -93,11 +93,11 @@ pub async fn process_packets(network_buffer:VirtAddr){
   while let Some(packet) = packets.next().await {
       // if the event was a receive ok
       if packet & ROK_INT_BIT != 0 {
-        network.read_packet_header();
+        network.process_packet();
       }
       // if the event was a transmit ok
       if packet & TOK_INT_BIT != 0 {
-          // do something else
+          // TODO: make sure any pending packets are sent now
       }
   }
 }

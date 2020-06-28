@@ -99,7 +99,59 @@ impl Network {
         status & ROK_INT_BIT != 0
     }
 
-    pub fn read_packet_header(&mut self)  {
+    pub fn process_arp(&mut self, mut r: PacketReader) {
+        let arp = ArpHeader::read(&mut r);
+        println!("{}", arp);
+    }
+
+    pub fn process_tcp(&mut self, mut r:PacketReader) {
+        let tcp = TCPHeader::read(&mut r);
+        println!("{}", tcp);
+    }
+
+    pub fn process_dhcp_cli(&mut self, mut r:PacketReader) {
+        let dhcp = DHCPHeader::read(&mut r);
+        println!("{}", dhcp);
+        match dhcp.dhcp_type {
+            DHCP_MSG_OFFER => self.send_dhcp_request(dhcp.srvaddr, dhcp.yiaddr),
+            DHCP_MSG_ACK => self.handle_dhcp_finish(dhcp.yiaddr),
+            _ => {},
+        }
+    }
+
+    pub fn process_udp(&mut self, mut r:PacketReader) {
+        let udp = UDPHeader::read(&mut r);
+        println!("{}", udp);
+        if udp.dst_port == DHCP_CLI_PORT {
+            self.process_dhcp_cli(r);
+        }
+    }
+    
+
+    pub fn process_ip(&mut self, mut r:PacketReader) {
+        let ip = IPv4Header::read(&mut r);
+        println!("{}", ip);
+        match ip.proto {
+            IP_PROTO_TCP => self.process_tcp(r),
+            IP_PROTO_UDP => self.process_udp(r),
+            _ => println!("Unknown ip protocol"),
+        }
+    }
+
+    pub fn process_ether(&mut self, mut r: PacketReader) {
+        let eth = EtherHeader::read(&mut r);
+        println!("==== PACKET ====");
+        println!("{}", eth);
+        match eth.proto {
+            ETH_PROTOCOL_ARP => self.process_arp(r),
+            ETH_PROTOCOL_IP  => self.process_ip(r),
+            _ => println!("Unknown protocol"),
+        }
+        
+            
+    }
+    pub fn process_packet(&mut self)  {
+        // TODO: need to account for buffer overflow -> wrap
         let packet_buffer = self.receive_buffer_addr + (self.receive_ptr as u64);
         let packet = unsafe {
              &mut *(packet_buffer as *mut Packet)
@@ -107,35 +159,10 @@ impl Network {
         let mut r = PacketReader::new(packet);
         let _flags = r.read_u16_le();
         let packet_length= r.read_u16_le();
+        //TODO: This should actually be +4, but it needs 2 more bytes, probably because of alignment
+        //investigate how to properly calculate the next receive ptr.
         self.receive_ptr += (packet_length +6) as usize;
-        let eth = EtherHeader::read(&mut r);
-        println!("==== PACKET ====");
-        println!("{}", eth);
-        if eth.proto == ETH_PROTOCOL_ARP {
-            let arp = ArpHeader::read(&mut r);
-            println!("{}", arp);
-        }
-        if eth.proto == ETH_PROTOCOL_IP {
-            let ip = IPv4Header::read(&mut r);
-            println!("{}", ip);
-            if ip.proto == IP_PROTO_TCP {
-                let tcp = TCPHeader::read(&mut r);
-                println!("{}", tcp);
-            } else if ip.proto == IP_PROTO_UDP {
-                let udp = UDPHeader::read(&mut r);
-                println!("{}", udp);
-                if udp.dst_port == DHCP_CLI_PORT {
-                    let dhcp = DHCPHeader::read(&mut r);
-                    println!("{}", dhcp);
-                    match dhcp.dhcp_type {
-                        DHCP_MSG_OFFER => self.send_dhcp_request(dhcp.srvaddr, dhcp.yiaddr),
-                        DHCP_MSG_ACK => self.handle_dhcp_finish(dhcp.yiaddr),
-                        _ => {},
-                    }
-                }
-            }
-        }
-        
+        self.process_ether(r);
     }
 
     pub fn interrupt_mask_port(&self) -> u16 {

@@ -46,7 +46,7 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
 // this function runs after everything is initialized
 // i use this for doodles that are later converted to tests.
 pub fn dothings(kernel:Kernel)  {
-    let mut executor = Executor::new(); // new
+    let mut executor = Executor::new();
     executor.spawn(Task::new(keyboard::print_keypresses()));
     executor.spawn(Task::new(network::process_packets(kernel.network_buffer)));
     executor.run();
