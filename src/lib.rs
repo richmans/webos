@@ -6,6 +6,7 @@
 #![test_runner(crate::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 #![feature(alloc_error_handler)]
+#![feature(generators, generator_trait)]
 
 extern crate alloc;
 pub mod memory;

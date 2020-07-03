@@ -56,6 +56,7 @@ pub struct Network {
     mac: EtherAddress,
     send_descriptor: usize,
     receive_ptr: usize,
+    ip: IPv4Address,
 }
 
 impl Network {
@@ -159,9 +160,7 @@ impl Network {
         let mut r = PacketReader::new(packet);
         let _flags = r.read_u16_le();
         let packet_length= r.read_u16_le();
-        //TODO: This should actually be +4, but it needs 2 more bytes, probably because of alignment
-        //investigate how to properly calculate the next receive ptr.
-        self.receive_ptr += (packet_length +6) as usize;
+        self.receive_ptr += ((packet_length +4+3)& !3) as usize;
         self.process_ether(r);
     }
 
@@ -187,69 +186,68 @@ impl Network {
 
     pub fn send_network_announcement(&mut self) {
         let msg = "Hello my friends, WebOS has joined your network!".as_bytes();
-        self.send_packet(ETH_BROADCAST_ADDRESS, ETH_PROTOCOL_ELITE, msg);
-    }
-
-    pub fn send_arp_probe(&mut self) {
-        // 10.0.2.15
-        let my_ip = IPv4Address::new(167772687);
-        // 10.0.2.2
-        let target_ip =  IPv4Address::new(167772674);
-        let mut writer = PacketWriter::new(&mut self.buffer.transmit[self.send_descriptor]);
-        let ether_header = EtherHeader::new(ETH_BROADCAST_ADDRESS, self.mac, ETH_PROTOCOL_ARP);
-        let arp_header = ArpHeader::new_request(self.mac, my_ip, target_ip);
-        ether_header.write(&mut writer);
-        arp_header.write(&mut writer);
-        let packet_length = writer.ptr;
+        let mut writer = self.get_ether_writer(ETH_BROADCAST_ADDRESS, ETH_PROTOCOL_ELITE);
+        writer.write(msg);
+        let packet_length = writer.finish();
         self.transmit_packet(packet_length);
     }
+
+    pub fn get_writer(&self) -> PacketWriter{
+        let buffer_address = self.transmit_buffer_addr as u32 + (PACKET_SIZE * self.send_descriptor) as u32;
+        let buffer = unsafe { &mut *(buffer_address as *mut Packet) };
+        PacketWriter::new(buffer)
+    }
+
+    pub fn get_ether_writer(&self, to: EtherAddress, proto: u16) -> PacketWriter{
+        let ether = EtherHeader::new(to, self.mac, proto);
+        let mut writer = self.get_writer();
+        ether.write(&mut writer);
+        writer
+    }
+
+    pub fn get_ip_writer(&mut self, to: IPv4Address, proto:u8) -> PacketWriter {
+        let ip = self.ip;
+        // TODO: arp lookup table
+        let eth_to = match to {
+            IP_BROADCAST_ADDRESS => ETH_BROADCAST_ADDRESS,
+            _ => ETH_BROADCAST_ADDRESS,
+        };
+        let mut writer = self.get_ether_writer(eth_to, ETH_PROTOCOL_IP);
+        let ip = IPv4Header::new(ip, to, proto);
+        ip.write(&mut writer);
+        writer
+    }
+
+    pub fn get_udp_writer(&mut self, to: IPv4Address, from_port: u16, to_port: u16) -> PacketWriter {
+        let mut writer = self.get_ip_writer(to, IP_PROTO_UDP);
+        let udp = UDPHeader::new(from_port, to_port);
+        udp.write(&mut writer);
+        writer
+    }
+
 
     pub fn send_dhcp_discover(&mut self) {
-        let mut writer = PacketWriter::new(&mut self.buffer.transmit[self.send_descriptor]);
-        let ether = EtherHeader::new(ETH_BROADCAST_ADDRESS, self.mac, ETH_PROTOCOL_IP);
-        let ipchecksum = 0x9876; // how do we know this?
-        let ip = IPv4Header::new(IPv4Address::new(0), IP_BROADCAST_ADDRESS, IP_PROTO_UDP, ipchecksum);
-        let udpchecksum = 0x1234; // how do we know this?
-        let udp = UDPHeader::new(DHCP_CLI_PORT, DHCP_SRV_PORT, udpchecksum);
-        let dhcp = DHCPHeader::new_discover(self.mac);
-        ether.write(&mut writer);
-        ip.write(&mut writer);
-        udp.write(&mut writer);
+        let mac = self.mac;
+        let mut writer = self.get_udp_writer(IP_BROADCAST_ADDRESS, DHCP_CLI_PORT, DHCP_SRV_PORT);
+        let dhcp = DHCPHeader::new_discover(mac);
         dhcp.write(&mut writer);
-        writer.finish();
-        let packet_length = writer.ptr;
+        let packet_length = writer.finish();
         self.transmit_packet(packet_length);
     }
 
+    
     pub fn send_dhcp_request(&mut self, server_address: IPv4Address, my_address: IPv4Address) {
-        let mut writer = PacketWriter::new(&mut self.buffer.transmit[self.send_descriptor]);
-        let ether = EtherHeader::new(ETH_BROADCAST_ADDRESS, self.mac, ETH_PROTOCOL_IP);
-        let ipchecksum = 0x9876; // how do we know this?
-        let ip = IPv4Header::new(IPv4Address::new(0), IP_BROADCAST_ADDRESS, IP_PROTO_UDP, ipchecksum);
-        let udpchecksum = 0x1234; // how do we know this?
-        let udp = UDPHeader::new(DHCP_CLI_PORT, DHCP_SRV_PORT, udpchecksum);
-        let dhcp = DHCPHeader::new_request(self.mac, server_address, my_address);
-        ether.write(&mut writer);
-        ip.write(&mut writer);
-        udp.write(&mut writer);
+        let mac = self.mac;
+        let mut writer = self.get_udp_writer(IP_BROADCAST_ADDRESS, DHCP_CLI_PORT, DHCP_SRV_PORT);
+        let dhcp = DHCPHeader::new_request(mac, server_address, my_address);
         dhcp.write(&mut writer);
-        writer.finish();
-        let packet_length = writer.ptr;
-        println!("Sending dhcp request");
+        let packet_length = writer.finish();
         self.transmit_packet(packet_length);
     }
 
     fn handle_dhcp_finish(&mut self, my_address: IPv4Address) {
+        self.ip = my_address;
         println!("DHCP finished. My ip: {}", my_address);
-    }
-
-    fn send_packet(&mut self, dst:EtherAddress, proto:u16, data: &[u8]) {
-        let header = EtherHeader::new(dst, self.mac, proto);
-        let mut writer = PacketWriter::new(&mut self.buffer.transmit[self.send_descriptor]);
-        header.write(&mut writer);
-        writer.write(data);
-        let packet_length = writer.ptr;
-        self.transmit_packet(packet_length);
     }
     
     fn transmit_packet(&mut self, packet_length:usize) {
@@ -310,7 +308,7 @@ pub fn init(buffer_virt_addr: VirtAddr) -> Network {
     let buffer_addr = buffer_virt_addr.as_u64();
     let buffer =  unsafe { &mut *(buffer_addr as *mut Buffer) };
     let transmit_buffer_addr = buffer_addr + RECEIVE_BUFFER_SIZE as u64;
-    let mut network = Network{adapter: device, buffer, receive_buffer_addr: buffer_addr, transmit_buffer_addr, mac: EtherAddress::new(0), send_descriptor: 0, receive_ptr:0 };
+    let mut network = Network{adapter: device, buffer, receive_buffer_addr: buffer_addr, transmit_buffer_addr, mac: EtherAddress::new(0), send_descriptor: 0, receive_ptr:0, ip: IPv4Address::new(0) };
     
     network.init_adapter();
     network

@@ -223,7 +223,7 @@ pub struct IPv4Header {
 }
 
 impl IPv4Header {
-  pub fn new(src: IPv4Address, dst: IPv4Address, proto: u8, checksum: u16) -> IPv4Header {
+  pub fn new(src: IPv4Address, dst: IPv4Address, proto: u8) -> IPv4Header {
     IPv4Header{
       version_header_length: 0x45,
       tos: 0x0,
@@ -232,7 +232,7 @@ impl IPv4Header {
       fragment_offset: 0,
       ttl: IPV4_TTL,
       proto: proto,
-      checksum: checksum,
+      checksum: 0,
       src: src,
       dst: dst,
     }
@@ -304,7 +304,7 @@ pub struct TCPHeader {
 }
 
 impl TCPHeader {
-  pub fn new(src_port: u16,dst_port: u16, seq: u32, ack:u32, data_offset: u8,flags: u16, checksum: u16, window_size:u16, urgent_pointer:u16) -> TCPHeader {
+  pub fn new(src_port: u16,dst_port: u16, seq: u32, ack:u32, data_offset: u8,flags: u16, window_size:u16, urgent_pointer:u16) -> TCPHeader {
     TCPHeader{
       src_port,
       dst_port,
@@ -313,7 +313,7 @@ impl TCPHeader {
       data_offset,
       flags,
       window_size,
-      checksum,
+      checksum: 0,
       urgent_pointer,
     }
   }
@@ -372,12 +372,12 @@ pub struct UDPHeader {
 }
 
 impl UDPHeader {
-  pub fn new(src_port: u16,dst_port: u16, checksum: u16) -> UDPHeader {
+  pub fn new(src_port: u16,dst_port: u16) -> UDPHeader {
     UDPHeader{
       src_port,
       dst_port,
       len: 0,
-      checksum,
+      checksum: 0,
     }
   }
  

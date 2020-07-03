@@ -99,7 +99,7 @@ impl<'a> PacketWriter<'a> {
     self.processors[idx].stop_crc();
   }
 
-  pub fn finish(&mut self) {
+  pub fn finish(&mut self) -> usize {
     self.processing = false;
     let mut mutations = Vec::<(usize, u16)>::new();
     for p in self.processors.iter_mut() {
@@ -120,6 +120,7 @@ impl<'a> PacketWriter<'a> {
       self.write_u16(m.1);
       self.ptr = ptr;
     }
+    self.ptr
   }
 
   pub fn write_u64_limited(&mut self, data:u64, len:usize) {
