@@ -23,7 +23,7 @@ impl PacketStream {
   pub fn new(interrupt_status_port:u16) -> Self {
     INTERRUPT_STATUS_PORT.init_once(|| interrupt_status_port);
     let ps=PacketStream { _private: ()};
-    PACKET_QUEUE.try_init_once(|| ArrayQueue::new(100))
+    PACKET_QUEUE.try_init_once(|| ArrayQueue::new(1000))
           .expect("PacketStream::new should only be called once");
     ps
   }
@@ -66,7 +66,7 @@ fn ack_interrupt() {
 pub(crate) fn add_packet(packet: u16) {
   if let Ok(queue) = PACKET_QUEUE.try_get() {
       if let Err(_) = queue.push(packet) {
-          panic!("WARNING: packet queue full; dropping network input");
+          println!("WARNING: packet queue full; dropping network input");
       } else {
           WAKER.wake();
       }
@@ -93,7 +93,7 @@ pub async fn process_packets(network_buffer:VirtAddr){
   while let Some(packet) = packets.next().await {
       // if the event was a receive ok
       if packet & ROK_INT_BIT != 0 {
-        network.process_packet();
+        network.process_packets();
       }
       // if the event was a transmit ok
       if packet & TOK_INT_BIT != 0 {

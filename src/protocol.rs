@@ -46,6 +46,9 @@ impl IPv4Address {
   pub fn new(addr:u32) -> IPv4Address {
     IPv4Address(addr)
   }
+  pub fn as_u64(&self) -> u64 {
+    self.0 as u64
+  }
 }
 
 impl core::fmt::Display for IPv4Address {
@@ -212,7 +215,7 @@ impl core::fmt::Display for ArpHeader {
 pub struct IPv4Header {
   version_header_length: u8,
   tos: u8,
-  len: u16,
+  pub len: u16,
   identification: u16,
   fragment_offset: u16,
   ttl: u8,
@@ -291,15 +294,15 @@ impl core::fmt::Display for IPv4Header {
 
 #[allow(dead_code)]
 pub struct TCPHeader {
-  src_port: u16,
-  dst_port: u16,
-  seq: u32,
-  ack: u32,
-  data_offset: u8,
-  flags: u16,
-  checksum: u16,
-  window_size: u16,
-  urgent_pointer: u16,
+  pub src_port: u16,
+  pub dst_port: u16,
+  pub seq: u32,
+  pub ack: u32,
+  pub data_offset: u8,
+  pub flags: u16,
+  pub checksum: u16,
+  pub window_size: u16,
+  pub urgent_pointer: u16,
 
 }
 
@@ -320,11 +323,12 @@ impl TCPHeader {
 
   pub fn write(&self, packet: &mut PacketWriter) {
     let p = packet.start_packet_processor_u16();
+    packet.add_shadow_sum(p);
     packet.write_u16(self.src_port);
     packet.write_u16(self.dst_port);
     packet.write_u32(self.seq);
     packet.write_u32(self.ack);
-    let data_offset_ns_bit = self.data_offset << 4 | ((self.flags | TCP_FLAG_NS) >> 8) as u8;
+    let data_offset_ns_bit = self.data_offset << 4 | ((self.flags & TCP_FLAG_NS) >> 8) as u8;
     packet.write_u8(data_offset_ns_bit);
     packet.write_u8(self.flags as u8);
     packet.write_u16(self.window_size);

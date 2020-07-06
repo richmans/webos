@@ -44,8 +44,9 @@ impl CRCProcessorU16 {
 
   fn finish(&mut self) -> (Option<usize>, u16, Option<usize>, u16){
     let mut crc = self.sum; 
-    //gocha: the len header should also be in the checksum
-    crc += self.len as u32;
+    if self.insert_len_at != None {
+      crc += self.len as u32;
+    }
     if self.shadow_sum != 0 {
       crc += self.shadow_sum;
       crc += self.len as u32;

@@ -2,11 +2,33 @@ use crate::println;
 use crate::pci;
 use crate::pci::{find_device, PCIDevice};
 use crate::buffer::{Packet, PACKET_SIZE, PacketWriter, PacketReader};
-use crate::protocol::{EtherHeader, EtherAddress, IPv4Address, IPv4Header, TCPHeader, DHCP_MSG_OFFER, DHCP_MSG_ACK, IP_PROTO_TCP, IP_PROTO_UDP, ETH_PROTOCOL_IP, ETH_PROTOCOL_ARP, ETH_PROTOCOL_ELITE, ETH_BROADCAST_ADDRESS, IP_BROADCAST_ADDRESS, ArpHeader, DHCP_CLI_PORT, DHCP_SRV_PORT, DHCPHeader, UDPHeader};
+use crate::protocol::{TCP_FLAG_SYN, TCP_FLAG_ACK, TCP_FLAG_FIN, EtherHeader, EtherAddress, IPv4Address, IPv4Header, TCPHeader, DHCP_MSG_OFFER, DHCP_MSG_ACK, IP_PROTO_TCP, IP_PROTO_UDP, ETH_PROTOCOL_IP, ETH_PROTOCOL_ARP, ETH_PROTOCOL_ELITE, ETH_BROADCAST_ADDRESS, IP_BROADCAST_ADDRESS, ArpHeader, DHCP_CLI_PORT, DHCP_SRV_PORT, DHCPHeader, UDPHeader};
 use x86_64::instructions::port::Port;
 use x86_64::{
    VirtAddr,
   };
+use hashbrown::HashMap;
+
+pub const TCP_STATE_LISTEN:u8=1;
+pub const TCP_STATE_SYN_SENT:u8=2;
+pub const TCP_STATE_SYN_RECEIVED:u8=3;
+pub const TCP_STATE_ESTABLISHED:u8=4;
+pub const TCP_STATE_FIN_WAIT_1:u8=5;
+pub const TCP_STATE_FIN_WAIT_2:u8=6;
+pub const TCP_STATE_CLOSE_WAIT:u8=7;
+pub const TCP_STATE_LAST_ACK:u8=8;
+pub const TCP_STATE_TIME_WAIT:u8=9;
+pub const TCP_STATE_CLOSED:u8=10;
+pub const TCP_WINDOW_SIZE:u16 = 2048;
+pub const HTTP_STATE_RESPONSE_SENT:u8 = 11;
+pub struct TCPConnection {
+    pub dst: IPv4Address,
+    pub src_port: u16,
+    pub dst_port: u16,
+    pub seq: u32,
+    pub ack: u32,
+    pub state: u8,
+}
 
 // registers
 pub const REG_CONFIG_93C46: u16 = 0x50;
@@ -19,6 +41,9 @@ pub const REG_INTERRUPT_MASK: u16 = 0x3c;
 pub const REG_INTERRUPT_STATUS: u16 = 0x3e;
 pub const REG_RCR:u16 = 0x44;
 pub const REG_MAC:u16 = 0x0;
+pub const REG_CAPR:u16 = 0x38;
+pub const REG_CBR:u16 = 0x3a;
+
 pub const REG_TRANSMIT_START: [u16; 4] = [0x20, 0x24, 0x28, 0x2c];
 pub const REG_TRANSMIT_COMMAND: [u16; 4] = [0x10, 0x14, 0x18, 0x1c];
 pub const CMD_TRANSMIT_ENABLE:u8 = 0x04;
@@ -29,7 +54,8 @@ pub const CMD_SW_RESET: u8 = 0x10;
 pub const RTL_VENDOR_ID: u16 = 0x10ec;
 pub const RTL_DEVICE_ID: u16 = 0x8139;
 
-pub const RECEIVE_BUFFER_SIZE: usize = 64 * 1024;
+pub const RECEIVE_BUFFER_MAX:usize = 8 * 1024;
+pub const RECEIVE_BUFFER_SIZE: usize = RECEIVE_BUFFER_MAX + 1600;
 pub const TRANSMIT_BUFFER_SIZE: usize = 4;
 pub const BUFFER_SIZE: usize = RECEIVE_BUFFER_SIZE + TRANSMIT_BUFFER_SIZE * PACKET_SIZE;
 
@@ -41,22 +67,18 @@ pub const RCR_ACCEPT_MULTICAST:u32 = 0x04;
 pub const RCR_ACCEPT_PHYSICAL_MATCH:u32 = 0x02;
 pub const RCR_ACCEPT_ALL:u32 = 0x01;
 pub const RCR_ACCEPT_ERROR:u32 = 0x10;
-
-#[repr(C)]
-struct Buffer {
-    receive: [u8; RECEIVE_BUFFER_SIZE],
-    transmit: [Packet; TRANSMIT_BUFFER_SIZE],
-}
+pub const RCR_WRAP:u32 = 1 << 7;
 
 pub struct Network {
     adapter: PCIDevice,
-    buffer: &'static mut Buffer,
+    //buffer: &'static mut Buffer,
     receive_buffer_addr: u64,
     transmit_buffer_addr: u64,
     mac: EtherAddress,
     send_descriptor: usize,
     receive_ptr: usize,
     ip: IPv4Address,
+    tcp_connections: HashMap<u64, TCPConnection>,
 }
 
 impl Network {
@@ -81,23 +103,17 @@ impl Network {
                 x86_64::instructions::hlt();
             }
         }
-        println!("Configuring rbstart at {:#X}", self.receive_buffer_addr);
+        println!("Configuring receive network buffer at {:#X}", self.receive_buffer_addr);
         // set the address of the receive buffer
         self.outl(REG_RBSTART, self.receive_buffer_addr as u32);
         // enable transmitter and receiver
         self.outb(REG_CMD, CMD_RECEIVE_ENABLE|CMD_TRANSMIT_ENABLE);
         // configure address masking
-        self.outl(REG_RCR, RCR_ACCEPT_BROADCAST|RCR_ACCEPT_MULTICAST|RCR_ACCEPT_PHYSICAL_MATCH|RCR_ACCEPT_ALL|RCR_ACCEPT_ERROR);
+        self.outl(REG_RCR, RCR_WRAP|RCR_ACCEPT_BROADCAST|RCR_ACCEPT_MULTICAST|RCR_ACCEPT_PHYSICAL_MATCH|RCR_ACCEPT_ALL|RCR_ACCEPT_ERROR);
         // arm interrupts
         self.outd(REG_INTERRUPT_MASK, ROK_INT_BIT | TOK_INT_BIT);
         
         println!("Network adapter init completed.");
-    }
-
-
-    pub fn check_packets(&self) -> bool {
-        let status = self.ind(REG_INTERRUPT_STATUS);
-        status & ROK_INT_BIT != 0
     }
 
     pub fn process_arp(&mut self, mut r: PacketReader) {
@@ -105,13 +121,76 @@ impl Network {
         println!("{}", arp);
     }
 
-    pub fn process_tcp(&mut self, mut r:PacketReader) {
+    pub fn process_tcp_syn(&mut self, ip: IPv4Header, tcp:TCPHeader) {
+        // TODO get some sort of random number generation going here
+        let sequence = 1700;
+        let con = TCPConnection{seq: sequence, ack: tcp.seq + 1, state: TCP_STATE_SYN_RECEIVED, dst: ip.src, dst_port: tcp.src_port, src_port: tcp.dst_port};
+        let conid = self.conid(&ip, &tcp);
+        self.tcp_connections.insert(conid, con);
+
+        let mut writer = self.get_tcp_writer(conid, TCP_FLAG_SYN | TCP_FLAG_ACK);
+        let packet_length = writer.finish();
+        self.transmit_packet(packet_length);
+        let con = self.tcp_connections.get_mut(&conid).expect("Connection not found");
+        con.seq += 1;
+    }
+
+    pub fn send_http_response(&mut self, conid: u64) {
+        let mut writer = self.get_tcp_writer(conid, TCP_FLAG_ACK|TCP_FLAG_FIN);
+        let data = b"HTTP/1.1 200 OK\nConnection: close\nContent-Type: text/html\n\n<html><body><h1>Hello, world!</h1>This is webOS!</body></html>";
+        writer.write(data);
+        let packet_length = writer.finish();
+        let connection = self.tcp_connections.get_mut(&conid).expect("Connection not found after being just created");
+        connection.seq += data.len() as u32;
+        self.transmit_packet(packet_length);
+    }
+
+    pub fn send_tcp_flags(&mut self, conid: u64, flags:u16) {
+        let mut writer = self.get_tcp_writer(conid, flags);
+        let packet_length = writer.finish();
+        self.transmit_packet(packet_length);
+    }
+
+    pub fn process_tcp_connection(&mut self, ip:IPv4Header, tcp: TCPHeader) {
+        let conid = self.conid(&ip, &tcp);
+        let tcplen = ip.len - 40;
+        let con = self.tcp_connections.get_mut(&conid).expect("Connection not found");
+        con.ack += tcplen as u32;
+        if (tcp.flags & TCP_FLAG_ACK != 0) && con.state == TCP_STATE_SYN_RECEIVED {
+            con.state = TCP_STATE_ESTABLISHED;
+        } else if con.state == TCP_STATE_ESTABLISHED {
+            con.state = TCP_STATE_FIN_WAIT_1;
+            self.send_http_response(conid);
+        } else if con.state == HTTP_STATE_RESPONSE_SENT && (tcp.flags & TCP_FLAG_ACK != 0) && tcp.ack == con.seq{
+            con.state = TCP_STATE_FIN_WAIT_1;
+            self.send_tcp_flags(conid, TCP_FLAG_ACK|TCP_FLAG_FIN);
+        } else if tcp.flags & TCP_FLAG_FIN != 0 {
+            con.state = TCP_STATE_CLOSED;
+            con.ack += 1;
+            self.send_tcp_flags(conid, TCP_FLAG_ACK);
+            self.tcp_connections.remove(&conid);
+        }
+    }
+
+    pub fn process_tcp(&mut self, ip:IPv4Header, mut r:PacketReader) {
         let tcp = TCPHeader::read(&mut r);
+        #[cfg(verbose)]
         println!("{}", tcp);
+
+        if tcp.dst_port == 80 {
+            let conid = self.conid(&ip, &tcp);
+            if tcp.flags & TCP_FLAG_SYN != 0 {
+                self.process_tcp_syn(ip, tcp);
+            }else  if self.tcp_connections.contains_key(&conid) {
+                self.process_tcp_connection(ip, tcp);
+            }
+        }
+        
     }
 
     pub fn process_dhcp_cli(&mut self, mut r:PacketReader) {
         let dhcp = DHCPHeader::read(&mut r);
+        #[cfg(verbose)]
         println!("{}", dhcp);
         match dhcp.dhcp_type {
             DHCP_MSG_OFFER => self.send_dhcp_request(dhcp.srvaddr, dhcp.yiaddr),
@@ -122,6 +201,7 @@ impl Network {
 
     pub fn process_udp(&mut self, mut r:PacketReader) {
         let udp = UDPHeader::read(&mut r);
+        #[cfg(verbose)]
         println!("{}", udp);
         if udp.dst_port == DHCP_CLI_PORT {
             self.process_dhcp_cli(r);
@@ -131,9 +211,10 @@ impl Network {
 
     pub fn process_ip(&mut self, mut r:PacketReader) {
         let ip = IPv4Header::read(&mut r);
+        #[cfg(verbose)]
         println!("{}", ip);
         match ip.proto {
-            IP_PROTO_TCP => self.process_tcp(r),
+            IP_PROTO_TCP => self.process_tcp(ip, r),
             IP_PROTO_UDP => self.process_udp(r),
             _ => println!("Unknown ip protocol"),
         }
@@ -141,7 +222,9 @@ impl Network {
 
     pub fn process_ether(&mut self, mut r: PacketReader) {
         let eth = EtherHeader::read(&mut r);
+        #[cfg(verbose)]
         println!("==== PACKET ====");
+        #[cfg(verbose)]
         println!("{}", eth);
         match eth.proto {
             ETH_PROTOCOL_ARP => self.process_arp(r),
@@ -151,8 +234,14 @@ impl Network {
         
             
     }
+
+    pub fn process_packets(&mut self) {
+        let cbr = self.ind(REG_CBR);
+        while cbr != self.receive_ptr as u16 {
+            self.process_packet();
+        }
+    }
     pub fn process_packet(&mut self)  {
-        // TODO: need to account for buffer overflow -> wrap
         let packet_buffer = self.receive_buffer_addr + (self.receive_ptr as u64);
         let packet = unsafe {
              &mut *(packet_buffer as *mut Packet)
@@ -162,8 +251,17 @@ impl Network {
         let packet_length= r.read_u16_le();
         self.receive_ptr += ((packet_length +4+3)& !3) as usize;
         self.process_ether(r);
+        self.update_capr();
+        if self.receive_ptr > RECEIVE_BUFFER_MAX - 4 {
+            self.receive_ptr -= RECEIVE_BUFFER_MAX;
+        }
     }
 
+    pub fn update_capr(&self)  {
+        self.outd(REG_CAPR, self.receive_ptr as u16 - 0x10);
+    }
+
+   
     pub fn interrupt_mask_port(&self) -> u16 {
         (self.adapter.bar0 as u16 & 0xfffc) + REG_INTERRUPT_MASK
     }
@@ -218,6 +316,10 @@ impl Network {
         writer
     }
 
+    pub fn conid(&self, ip: &IPv4Header, tcp: &TCPHeader) -> u64 {
+        (ip.src.as_u64() << 32) + ((tcp.src_port as u64) << 16) + tcp.dst_port as u64
+    }
+    
     pub fn get_udp_writer(&mut self, to: IPv4Address, from_port: u16, to_port: u16) -> PacketWriter {
         let mut writer = self.get_ip_writer(to, IP_PROTO_UDP);
         let udp = UDPHeader::new(from_port, to_port);
@@ -225,6 +327,19 @@ impl Network {
         writer
     }
 
+    pub fn get_tcp_writer(&mut self, conid: u64, flags: u16) -> PacketWriter {
+        let connection = self.tcp_connections.get(&conid).expect("Connection not found after being just created");
+        let src_port = connection.src_port;
+        let dst = connection.dst;
+        let dst_port = connection.dst_port;
+        let seq = connection.seq;
+        let ack = connection.ack;
+        
+        let mut writer = self.get_ip_writer(dst, IP_PROTO_TCP);
+        let tcp = TCPHeader::new(src_port, dst_port, seq, ack, 5, flags, TCP_WINDOW_SIZE, 0);
+        tcp.write(&mut writer);
+        writer
+    }
 
     pub fn send_dhcp_discover(&mut self) {
         let mac = self.mac;
@@ -247,7 +362,7 @@ impl Network {
 
     fn handle_dhcp_finish(&mut self, my_address: IPv4Address) {
         self.ip = my_address;
-        println!("DHCP finished. My ip: {}", my_address);
+        println!("Network configuration finished. Ready to serve on: http://{}", my_address);
     }
     
     fn transmit_packet(&mut self, packet_length:usize) {
@@ -306,9 +421,8 @@ fn find_network_device() -> PCIDevice{
 pub fn init(buffer_virt_addr: VirtAddr) -> Network {
     let device = find_network_device();
     let buffer_addr = buffer_virt_addr.as_u64();
-    let buffer =  unsafe { &mut *(buffer_addr as *mut Buffer) };
     let transmit_buffer_addr = buffer_addr + RECEIVE_BUFFER_SIZE as u64;
-    let mut network = Network{adapter: device, buffer, receive_buffer_addr: buffer_addr, transmit_buffer_addr, mac: EtherAddress::new(0), send_descriptor: 0, receive_ptr:0, ip: IPv4Address::new(0) };
+    let mut network = Network{adapter: device, receive_buffer_addr: buffer_addr, transmit_buffer_addr, mac: EtherAddress::new(0), send_descriptor: 0, receive_ptr:0, ip: IPv4Address::new(0), tcp_connections:HashMap::new()};
     
     network.init_adapter();
     network
